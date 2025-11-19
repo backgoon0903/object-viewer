@@ -1,80 +1,225 @@
 <!DOCTYPE html>
 <html lang="ko">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>신발 감지</title>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Object Info Viewer</title>
 
-<!-- TensorFlow.js & COCO-SSD -->
-<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@3.21.0"></script>
-<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
+  <!-- TensorFlow.js & COCO-SSD -->
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@3.21.0"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
 
-<style>
-  body { margin:0; background:#111; color:#fff; font-family:Arial, sans-serif; text-align:center; }
-  video { width:100%; max-width:600px; border:1px solid #333; }
-  #info { padding:10px; font-size:18px; white-space:pre-line; text-align:center; }
-  #startBtn { margin:10px; padding:10px 18px; font-size:16px; border-radius:8px; background:#333; color:#fff; border:none; }
-</style>
+  <style>
+    :root {
+      --bg: #0f1720;
+      --panel: #0b1220;
+      --accent: #6ee7b7;
+      --text: #e6eef6;
+    }
+    html,body {
+      height:100%;
+      margin:0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", Arial;
+      background: linear-gradient(180deg, var(--bg), #071018);
+      color:var(--text);
+      -webkit-font-smoothing:antialiased;
+      -moz-osx-font-smoothing:grayscale;
+    }
+
+    .wrap {
+      max-width:900px;
+      margin:0 auto;
+      padding:18px;
+    }
+
+    header {
+      text-align:center;
+      margin-bottom:12px;
+    }
+    h1 { margin:6px 0; font-size:18px; font-weight:600; color:var(--accent); }
+    p.subtitle { margin:0; font-size:13px; color:#9fb0c2; }
+
+    .camera-area {
+      position:relative;
+      margin-top:14px;
+      border-radius:12px;
+      overflow:hidden;
+      box-shadow: 0 6px 18px rgba(2,8,23,0.6);
+      background:var(--panel);
+    }
+
+    video {
+      width:100%;
+      height:auto;
+      display:block;
+    }
+
+    #overlay {
+      position:absolute;
+      left:8px;
+      top:8px;
+      right:8px;
+      pointer-events:none;
+    }
+
+    #info {
+      padding:14px;
+      font-size:16px;
+      line-height:1.45;
+      white-space:pre-line;
+      text-align:left;
+      background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));
+    }
+
+    #startBtn {
+      display:block;
+      margin:20px auto 6px;
+      background:linear-gradient(180deg,#163a3a,#0b2d2d);
+      border:1px solid rgba(255,255,255,0.05);
+      color:var(--text);
+      padding:12px 18px;
+      border-radius:10px;
+      font-size:16px;
+      font-weight:600;
+    }
+
+    footer { text-align:center; margin-top:12px; font-size:12px; color:#8ea3b6; }
+
+    /* 작은 화면에서 텍스트 줄임 */
+    @media (max-width:420px) {
+      #info { font-size:15px; padding:12px; }
+      h1 { font-size:16px; }
+      #startBtn { width:86%; }
+    }
+  </style>
 </head>
 <body>
+  <div class="wrap">
+    <header>
+      <h1>Object Info Viewer</h1>
+      <p class="subtitle">버튼을 눌러 카메라를 시작하세요. (iOS에서 로컬 파일은 권한이 안 뜹니다 → GitHub Pages 사용 권장)</p>
+    </header>
 
-<h1>신발 감지 전용</h1>
-<p>버튼을 눌러 카메라 시작 후 신발 감지</p>
-<button id="startBtn">카메라 시작</button>
-<br>
-<video id="camera" autoplay playsinline></video>
-<div id="info">시작 버튼을 눌러주세요</div>
+    <button id="startBtn">카메라 시작하기</button>
+
+    <div class="camera-area" id="cameraArea" style="display:none;">
+      <video id="camera" autoplay playsinline></video>
+      <div id="overlay"></div>
+    </div>
+
+    <div id="info" style="display:none;">카메라를 시작해주세요.</div>
+
+    <footer>인식 대상: 컵(cup), 책(book), 병(bottle), 펜(toothbrush → 펜으로 표시)</footer>
+  </div>
 
 <script>
+/* --------------------------------------------------
+   설명: 감지된 객체의 라벨에 따라 네가 직접 작성한
+   텍스트를 화면에 표시합니다.
+   pen은 COCO-SSD에서 toothbrush로 인식되도록 처리합니다.
+   -------------------------------------------------- */
+const descriptions = {
+  "cup": `[컵]
+이것은 컵입니다.
+음료를 담아 마실 때 사용하는 용기입니다.
+유리, 플라스틱, 종이 등 다양한 재질이 있습니다.`,
+
+  "book": `[책]
+이것은 책입니다.
+읽기와 학습을 위한 매체로, 여러 페이지로 구성됩니다.`,
+
+  "bottle": `[병]
+이것은 병입니다.
+물을 비롯한 음료를 담는 용기이며, 주로 플라스틱 또는 유리로 만들어집니다.`,
+
+  // COCO-SSD에는 'pen'이 따로 없으므로 'toothbrush'를 펜으로 덮어씌움
+  "toothbrush": `[펜]
+이것은 펜입니다.
+글씨를 쓰거나 메모할 때 사용하는 도구로, 볼펜·샤프·만년필 등 여러 종류가 있습니다.`
+};
+
+/* UI 엘리먼트 */
 const startBtn = document.getElementById('startBtn');
 const video = document.getElementById('camera');
 const info = document.getElementById('info');
+const cameraArea = document.getElementById('cameraArea');
 
 let model = null;
 let running = false;
 
+/* 버튼 클릭 → 사용자 제스처 안에서 getUserMedia 호출 (iOS 필수) */
 startBtn.addEventListener('click', async () => {
-  startBtn.style.display = 'none';
-  info.innerText = '카메라 권한 요청 중...';
+  startBtn.disabled = true;
+  startBtn.innerText = '권한 요청 중...';
 
+  // 카메라 스트림 요청 (뒷면 카메라 우선)
   try {
-    // 휴대폰 후면 카메라
     const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
     video.srcObject = stream;
+    cameraArea.style.display = 'block';
+    info.style.display = 'block';
+    startBtn.style.display = 'none';
+    info.innerText = '카메라 준비 중... 모델 로드 대기';
 
-    info.innerText = '모델 로드 중...';
-    model = await cocoSsd.load();
+    // 모델 로드 (한 번만)
+    if (!model) {
+      model = await cocoSsd.load();
+    }
 
-    info.innerText = '카메라에 신발을 비춰주세요!';
+    info.innerText = '물건을 카메라에 비춰보세요!';
     running = true;
     detectLoop();
-  } catch(e) {
-    console.error(e);
-    info.innerText = '카메라 권한 필요 또는 에러 발생';
+  } catch (err) {
+    console.error('카메라 시작 실패:', err);
+    startBtn.disabled = false;
+    startBtn.innerText = '카메라 시작하기';
+    info.style.display = 'block';
+    info.innerText = '카메라 권한이 필요합니다. 권한을 허용하거나 HTTPS에서 실행해주세요.';
   }
 });
 
+/* 감지 루프 */
 async function detectLoop() {
-  if(!running || !model) return;
+  if (!running || !model) return;
 
-  const predictions = await model.detect(video);
-  let outText = '';
-  const seen = new Set();
+  try {
+    const predictions = await model.detect(video);
 
-  predictions.sort((a,b) => b.score - a.score);
-  for(const p of predictions){
-    const label = p.class;
-    // COCO-SSD에서는 신발을 "sports shoe"로 인식
-    if(label==='sports shoe' && !seen.has(label)){
-      outText += `[신발]\n감지됨\n\n`;
-      seen.add(label);
+    // 우리가 등록한 라벨(또는 덮어씌운 라벨)만 모아서 표시
+    let outText = '';
+    const seen = new Set();
+
+    // 우선순위: 높은 score 우선으로 정렬(화면에 여러개 있을 때)
+    predictions.sort((a,b) => b.score - a.score);
+
+    for (const p of predictions) {
+      const label = p.class;
+      if (descriptions[label] && !seen.has(label)) {
+        outText += descriptions[label] + '\n\n';
+        seen.add(label);
+      }
     }
+
+    if (!outText.trim()) {
+      info.innerText = '인식된 등록 물건이 없습니다.';
+    } else {
+      info.innerText = outText.trim();
+    }
+  } catch (e) {
+    console.error('감지 에러', e);
+    info.innerText = '감지 중 오류가 발생했습니다.';
   }
 
-  info.innerText = outText || '등록된 신발이 없습니다.';
   requestAnimationFrame(detectLoop);
 }
-</script>
 
+/* 페이지 떠날 때 스트림 종료 처리 */
+window.addEventListener('beforeunload', () => {
+  if (video && video.srcObject) {
+    const tracks = video.srcObject.getTracks();
+    tracks.forEach(t => t.stop());
+  }
+});
+</script>
 </body>
 </html>
