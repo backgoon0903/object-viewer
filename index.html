@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Object Info Viewer</title>
+
+  <!-- TensorFlow.js & COCO-SSD -->
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@3.21.0"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
+
+  <style>
+    body {
+      margin: 0;
+      background: #111;
+      color: #fff;
+      font-family: Arial, sans-serif;
+      text-align: center;
+      padding-top: 50px;
+    }
+    video {
+      width: 100%;
+      display: none;
+    }
+    #info {
+      padding: 20px;
+      font-size: 20px;
+      white-space: pre-line;
+      line-height: 1.6em;
+      text-align: left;
+      display: none;
+    }
+    #startBtn {
+      padding: 15px 25px;
+      font-size: 20px;
+      background: #444;
+      border: none;
+      border-radius: 10px;
+      color: #fff;
+    }
+  </style>
+</head>
+
+<body>
+
+<button id="startBtn">카메라 시작하기</button>
+
+<video id="camera" autoplay playsinline></video>
+<div id="info"></div>
+
+<script>
+const descriptions = {
+  "cup": `
+[컵]
+음료를 담아 마시는 용기입니다.
+  `,
+  "book": `
+[책]
+지식을 습득하기 위한 읽기 자료입니다.
+  `,
+  "bottle": `
+[병]
+액체를 담기 위한 용기입니다.
+  `,
+  "toothbrush": `
+[펜]
+글을 쓰는 도구입니다.
+  `
+};
+
+const startBtn = document.getElementById("startBtn");
+const video = document.getElementById("camera");
+const info = document.getElementById("info");
+
+startBtn.addEventListener("click", startCamera); // <- iOS 핵심
+
+function startCamera() {
+  startBtn.style.display = "none";
+  info.style.display = "block";
+  info.innerText = "카메라 권한을 요청하는 중...";
+
+  navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } })
+    .then(stream => {
+      video.srcObject = stream;
+      video.style.display = "block";
+
+      info.innerText = "카메라 준비 중...";
+      startModel();
+    })
+    .catch(() => {
+      info.innerText = "카메라 권한이 필요합니다!";
+    });
+}
+
+let model;
+function startModel() {
+  cocoSsd.load().then(m => {
+    model = m;
+    info.innerText = "물건을 카메라로 비춰보세요!";
+    detectObjects();
+  });
+}
+
+function detectObjects() {
+  model.detect(video).then(predictions => {
+
+    let result = "";
+
+    predictions.forEach(p => {
+      if (descriptions[p.class]) {
+        result += descriptions[p.class] + "\n";
+      }
+    });
+
+    info.innerText = result || "인식된 물건이 없습니다.";
+
+    requestAnimationFrame(detectObjects);
+  });
+}
+</script>
+
+</body>
+</html>
